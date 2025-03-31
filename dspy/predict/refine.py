@@ -103,7 +103,7 @@ class Refine(Module):
     """
     def __init__(
         self,
-        module: Module,
+        signature: Signature,
         reward_fn: Optional[Callable[[dict[str, Any], Prediction], float]] = None,
         threshold: Optional[float] = None,
         validators: Optional[list[Callable[[Prediction], tuple[bool, str]]]] = None,
@@ -116,7 +116,7 @@ class Refine(Module):
         Initializes the Refine module.
 
         Args:
-            module (Module): The DSPy module to refine. Its signature will be adapted.
+            signature (Signature): The DSPy signature that defines the input and output fields for the module being refined.
             reward_fn (Optional[Callable]): Function evaluating output quality (args, pred) -> float.
             threshold (Optional[float]): Minimum acceptable reward score.
             validators (Optional[List[Callable]]): Functions validating predictions (pred) -> (bool, str).
@@ -126,8 +126,7 @@ class Refine(Module):
             fail_on_invalid (bool): Raise ValueError if constraints aren't met after N attempts. Defaults to False.
         """
         super().__init__()
-        assert module is not None, "A `module` must be provided to Refine."
-        self.module = module
+        assert signature is not None, "A `signature` must be provided to Refine."
         self.reward_fn = reward_fn
         self.threshold = threshold
         self.validators = validators or []
@@ -135,53 +134,32 @@ class Refine(Module):
         self.use_cot = use_cot
         self.verbose = verbose
         self.fail_on_invalid = fail_on_invalid
+        self.signature = copy.deepcopy(signature)
 
-        base_signature = getattr(module, "signature", None)
-        assert base_signature is not None, "The provided `module` must have a `signature` attribute."
-        _internal_signature = copy.deepcopy(base_signature)
-
-        # Add 'previous_attempts' field if hard constraints (validators) are used
-        if self.validators and "previous_attempts" not in _internal_signature.input_fields:
-            _internal_signature = _internal_signature.append(
-                "previous_attempts",
-                dspy.InputField(
-                    desc="Review these previous attempts and feedback on their quality to improve your response."
-                )
-            )
-        self.signature = _internal_signature
-
-        # Create the internal predict_module if hard constraints (validators) are used,
-        # as it's needed to process the 'previous_attempts' field.
-        # Soft constraints alone use the original module structure with context adaptation.
-        self.predict_module = None
+        # Create internal modules based on the signature
+        predictor_class = dspy.ChainOfThought if self.use_cot else dspy.Predict
+        # Create the standard module for soft constraints (using original signature)
+        self.soft_constraints_module = predictor_class(self.signature)
+        # Create the validator module with added 'previous_attempts' field if needed
         if self.validators:
-            predictor_class = dspy.ChainOfThought if self.use_cot else dspy.Predict
-            self.predict_module = predictor_class(self.signature)
-
+            # Add 'previous_attempts' field if hard constraints (validators) are used
+            if "previous_attempts" not in self.signature.input_fields:
+                validator_signature = self.signature.append(
+                    "previous_attempts",
+                    dspy.InputField(
+                        desc="Review these previous attempts and feedback on their quality to improve your response."
+                    )
+                )
+            else:
+                validator_signature = self.signature
+            # Create the module for validators
+            self.hard_constraints_module = predictor_class(validator_signature)
         # Code Inspection
-        self.module_code = ""
-        self.reward_fn_code = ""
+        self.soft_constraints_module_code = inspect.getsource(self.soft_constraints_module.__class__)
         try:
-            self.module_code = inspect.getsource(self.module.__class__)
+            self.reward_fn_code = inspect.getsource(reward_fn) if reward_fn else ""
         except (TypeError, OSError):
-            self.module_code = f"# Source code for {self.module.__class__.__name__} unavailable"
-
-        if self.reward_fn:
-            try:
-                self.reward_fn_code = inspect.getsource(self.reward_fn)
-            except (TypeError, OSError):
-                try:
-                    # Handle cases where reward_fn might be a class instance's __call__ or method
-                    if hasattr(self.reward_fn, "__class__") and not inspect.isfunction(self.reward_fn):
-                         # Try getting source of the class first
-                        self.reward_fn_code = inspect.getsource(self.reward_fn.__class__)
-                    else: # Fallback or if it's a non-inspectable function type
-                        raise TypeError("Cannot get source for reward function")
-                except (TypeError, AttributeError, OSError):
-                    func_name = getattr(self.reward_fn, '__name__', type(self.reward_fn).__name__)
-                    self.reward_fn_code = f"# Source code for reward function '{func_name}' unavailable"
-        else:
-            self.reward_fn_code = "# Reward function was not provided."
+            self.reward_fn_code = ""
 
     def _get_temperatures(self) -> list[float]:
         """
@@ -271,11 +249,11 @@ class Refine(Module):
         Returns:
             dict: Feedback for each module or None.
         """
-        if not self.reward_fn is not None:
+        if self.reward_fn is None:
             return None
         predictor2name = {predictor: name for name, predictor in mod.named_predictors()}
         module_names = [name for name, _ in mod.named_predictors()]
-        modules = dict(program_code=self.module_code, modules_defn=inspect_modules(mod))
+        modules = dict(program_code=self.soft_constraints_module_code, modules_defn=inspect_modules(mod))
         trajectory = [dict(module_name=predictor2name.get(p, "unknown"), inputs=i, outputs=dict(o)) for p, i, o in trace]
         trajectory = dict(program_inputs=inputs, program_trajectory=trajectory, program_outputs=dict(outputs))
         reward = dict(reward_code=self.reward_fn_code, target_threshold=self.threshold, reward_value=reward_value)
@@ -461,12 +439,12 @@ class Refine(Module):
             try:
                 with dspy.context(lm=lm_temp, trace=[]):
                     if has_validators:
-                        if not self.predict_module:
-                            raise RuntimeError("Internal predict_module not initialized despite having validators.")
-                        current_mod = self.predict_module
+                        if not self.hard_constraints_module:
+                            raise RuntimeError("Internal hard_constraints_module not initialized despite having validators.")
+                        current_mod = self.hard_constraints_module
                         outputs: Prediction = current_mod(**current_kwargs)
                     elif has_reward_fn:
-                        current_mod = self.module
+                        current_mod = self.soft_constraints_module
                         if programmatic_feedback_for_llm:
                             wrapped_adapter = apply_feedback(adapter, programmatic_feedback_for_llm, current_mod)
                             with dspy.context(adapter=wrapped_adapter):
@@ -474,7 +452,7 @@ class Refine(Module):
                         else:
                             outputs = current_mod(**current_kwargs)
                     else:
-                        current_mod = self.module
+                        current_mod = self.soft_constraints_module
                         outputs = current_mod(**current_kwargs)
                     trace = dspy.settings.trace
 
@@ -493,7 +471,7 @@ class Refine(Module):
                 if has_reward_fn and passed_validators_current:
                     generate_llm_feedback = idx < self.N - 1  # Only generate if more attempts are possible
                     current_reward, programmatic_feedback_for_llm = self._evaluate_soft_constraints(
-                        self.module,
+                        self.soft_constraints_module,
                         kwargs,
                         outputs,
                         trace,
