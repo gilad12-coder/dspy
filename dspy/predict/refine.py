@@ -7,6 +7,7 @@ from typing import Any, Union
 import dspy
 import ujson
 from dspy.adapters.chat_adapter import enumerate_fields
+from dspy.adapters.utils import get_field_description_string
 from dspy.predict.predict import Prediction
 from dspy.primitives import Module
 from dspy.signatures import InputField, OutputField, Signature
