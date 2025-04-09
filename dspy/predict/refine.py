@@ -6,7 +6,6 @@ from typing import Any, Union
 
 import dspy
 import ujson
-from dspy.adapters.chat_adapter import enumerate_fields
 from dspy.adapters.utils import get_field_description_string
 from dspy.predict.predict import Prediction
 from dspy.primitives import Module
@@ -500,45 +499,33 @@ class Refine(Module):
         return best_prediction
 
 
-def inspect_modules(program: Module) -> str:
+def inspect_modules(program):
     """
-    Generate a formatted string representation of a module's signature and instructions.
+    Generates a formatted string representation of modules in a DSPy program.
 
-    Primarily used to provide context about the predictor module to the `OfferFeedback` LLM,
-    though OfferFeedback is no longer called directly by Refine.
+    This function examines a DSPy program and creates a detailed textual description
+    of each module it contains, including input fields, output fields, and instructions.
+    The output is formatted with clear separators between modules for improved readability.
 
     Args:
-        program (Module): The DSPy module (typically the internal `predictor_module` of Refine)
-                          to inspect.
+        program: A DSPy module or program containing named predictors to be inspected.
 
     Returns:
-        str: A formatted string containing the module's input/output fields and instructions.
-             Returns an error message string if inspection fails.
+        str: A formatted multi-line string containing detailed descriptions of all modules
+             in the program, with separator lines between each module's information.
     """
-    separator: str = "-" * 80
-    output: list[str] = [separator]
-    try:
-        signature: Signature = program.signature
-        name: str = "predictor_module"
-        instructions_raw: str = signature.instructions
-        instructions_dedented: str = textwrap.dedent(instructions_raw)
-        instructions_formatted: str = ("\n" + "\t" * 2).join(
-            [""] + instructions_dedented.splitlines()
-        )
+    separator = "-" * 80
+    output = [separator]
+    for idx, (name, predictor) in enumerate(program.named_predictors()):
+        signature = predictor.signature
+        instructions = textwrap.dedent(signature.instructions)
+        instructions = ("\n" + "\t" * 2).join([""] + instructions.splitlines())
         output.append(f"Module {name}")
         output.append("\n\tInput Fields:")
-        input_fields_str: str = enumerate_fields(signature.input_fields)
-        output.append(("\n" + "\t" * 2).join([""] + input_fields_str.splitlines()))
+        output.append(("\n" + "\t" * 2).join([""] + get_field_description_string(signature.input_fields).splitlines()))
         output.append("\tOutput Fields:")
-        output_fields_str: str = enumerate_fields(signature.output_fields)
-        output.append(("\n" + "\t" * 2).join([""] + output_fields_str.splitlines()))
-        output.append(f"\tOriginal Instructions: {instructions_formatted}")
-        output.append(separator)
-    except AttributeError:
-        output.append("Could not inspect module: Missing 'signature' attribute.")
-        output.append(separator)
-    except Exception as e:
-        output.append(f"Could not inspect module details: {type(e).__name__}: {e}")
+        output.append(("\n" + "\t" * 2).join([""] + get_field_description_string(signature.output_fields).splitlines()))
+        output.append(f"\tOriginal Instructions: {instructions}")
         output.append(separator)
     return "\n".join([o.strip("\n") for o in output])
 
