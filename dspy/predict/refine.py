@@ -59,15 +59,15 @@ def format_llm_feedback(advice_dict: dict[str, str] | None) -> str:
     for module_name, advice in sorted(advice_dict.items()):
         formatted_parts.append(f"MODULE: {module_name}")
         if advice.strip().upper() == "N/A" or not advice.strip():
-            formatted_parts.append("  Advice: No specific improvements needed for this module.")
+            formatted_parts.append(f"\tAdvice: No specific improvements needed for this module.")
         else:
             advice_lines: list[str] = advice.strip().split("\n")
             if len(advice_lines) == 1:
-                formatted_parts.append(f"  Advice: {advice_lines[0]}")
+                formatted_parts.append(f"\tAdvice: {advice_lines[0]}")
             else:
-                formatted_parts.append("  Advice:")
+                formatted_parts.append("\tAdvice:")
                 for line in advice_lines:
-                    formatted_parts.append(f"    {line}")
+                    formatted_parts.append(f"\t\t{line}")
     return "\n".join(formatted_parts)
 
 
@@ -189,7 +189,7 @@ class Refine(Module):
         self,
         signature: Signature,
         reward_fn: Callable[[dict[str, Any], Prediction], Prediction],
-        threshold: Union[float, bool] = 0.0,
+        threshold: Union[float, bool, int] = 0.0,
         N: int = 3,
         use_cot: bool = False,
         verbose: bool = False,
@@ -207,8 +207,9 @@ class Refine(Module):
                                  original inputs. It must return a `dspy.Prediction` object containing
                                  'score' (float or convertible) and 'feedback' (str) attributes.
                                  Function signature: fn(args: dict[str, Any], pred: Prediction) -> Prediction
-            threshold (Union[float, bool]): Minimum acceptable score. Refinement stops if this score is met or exceeded.
-                              Defaults to 0.7.
+            threshold (Union[float, bool, int]): Minimum acceptable score. Refinement stops if this score is met or exceeded.
+                Can be a float, boolean, or integer value. If a boolean is provided, True is treated as 1.0 and False as 0.0.
+                Defaults to 0.7.
             N (int): Maximum number of refinement iterations to attempt. Defaults to 3.
             use_cot (bool): If True, uses `dspy.ChainOfThought` for the internal predictor module,
                            encouraging step-by-step reasoning. If False, uses `dspy.Predict`.
@@ -230,10 +231,7 @@ class Refine(Module):
         assert isinstance(threshold, (float, int, bool)), "`threshold` must be a numerical/bool value."
 
         self.reward_fn = reward_fn
-        if isinstance(threshold, bool):
-            self.threshold = 1.0 if threshold else 0.0
-        else:
-            self.threshold = threshold
+        self.threshold = float(threshold)
         self.N = max(1, N)
         self.use_cot = use_cot
         self.verbose = verbose
@@ -428,7 +426,7 @@ class Refine(Module):
                  except Exception:
                      serialized_advise_kwargs[k] = repr(v)
         try:
-            feedback_module = dspy.Predict(OfferFeedback)
+            feedback_module = dspy.ChainOfThought(OfferFeedback)
             feedback_result = feedback_module(**serialized_advise_kwargs)
             advice_dict = feedback_result.advice
             if not isinstance(advice_dict, dict):
