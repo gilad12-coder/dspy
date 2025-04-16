@@ -59,7 +59,7 @@ def format_llm_feedback(advice_dict: dict[str, str] | None) -> str:
     for module_name, advice in sorted(advice_dict.items()):
         formatted_parts.append(f"MODULE: {module_name}")
         if advice.strip().upper() == "N/A" or not advice.strip():
-            formatted_parts.append(f"\tAdvice: No specific improvements needed for this module.")
+            formatted_parts.append("\tAdvice: No specific improvements needed for this module.")
         else:
             advice_lines: list[str] = advice.strip().split("\n")
             if len(advice_lines) == 1:
