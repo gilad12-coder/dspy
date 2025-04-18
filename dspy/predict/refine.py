@@ -39,19 +39,23 @@ class OfferFeedback(Signature):
 
 
 def format_llm_feedback(advice_dict: dict[str, str] | None) -> str:
-    """Formats OfferFeedback output into a readable string for previous_attempts field.
+    """
+    Formats OfferFeedback output into a readable string for previous_attempts field.
 
     Example:
-        >>> feedback = {
-        ...     "AnswerGenerator": "Include more specific details from the retrieved context in your responses.",
-        ...     "FactChecker": "N/A"
-        ... }
-        >>> print(format_llm_feedback(feedback))
-        MODULE-SPECIFIC FEEDBACK:
-        MODULE: AnswerGenerator
-          Advice: Include more specific details from the retrieved context in your responses.
-        MODULE: FactChecker
-          Advice: No specific improvements needed for this module.
+    ```python
+    feedback = {
+        "AnswerGenerator": "Include more specific details from the retrieved context in your responses.",
+        "FactChecker": "N/A"
+    }
+    print(format_llm_feedback(feedback))
+    # Output:
+    # MODULE-SPECIFIC FEEDBACK:
+    # MODULE: AnswerGenerator
+    #   Advice: Include more specific details from the retrieved context in your responses.
+    # MODULE: FactChecker
+    #   Advice: No specific improvements needed for this module.
+    ```
     """
     if not isinstance(advice_dict, dict):
         return f"Expected dictionary of advice, got {type(advice_dict).__name__}"
@@ -98,92 +102,74 @@ class Refine(Module):
     history of previous outputs, scores, and feedback via the `previous_attempts` input field.
 
     Example:
-    >>> import dspy
-    >>>
-    >>> # Define a Signature for the base task
-    >>> class GenerateQA(dspy.Signature):
-    ...     "Answer a question."
-    ...     question = dspy.InputField()
-    ...     answer = dspy.OutputField(desc="A concise answer.")
-    >>>
-    >>> # Define a Signature for assessing quality (used *after* programmatic checks pass)
-    >>> class AssessQuality(dspy.Signature):
-    ...     "Assess the quality of the generated answer."
-    ...     question = dspy.InputField()
-    ...     answer = dspy.InputField()
-    ...     assessment_score = dspy.OutputField(desc="A score from 0.0 to 1.0.")
-    ...     assessment_feedback = dspy.OutputField(desc="Feedback to improve the answer.")
-    >>>
-    >>> # Define the reward function - with internal programmatic checks
-    >>> def assess_quality_with_constraints(args, pred):
-    ...     MIN_WORDS = 5
-    ...     MAX_WORDS = 50
-    ...     TARGET_FIELD = "answer"
-    ...     constraint_failures = []
-    ...     output_value = getattr(pred, TARGET_FIELD, "")
-    ...
-    ...     # Programmatic check for word count
-    ...     if isinstance(output_value, str):
-    ...         word_count = len(output_value.split())
-    ...         if word_count <= MIN_WORDS:
-    ...             constraint_failures.append(f"Constraint Failed: '{TARGET_FIELD}' is too short ({word_count} < {MIN_WORDS} words).")
-    ...         elif word_count >= MAX_WORDS:
-    ...             constraint_failures.append(f"Constraint Failed: '{TARGET_FIELD}' is too long ({word_count} > {MAX_WORDS} words).")
-    ...     else:
-    ...         constraint_failures.append(f"Constraint Check Error: Field '{TARGET_FIELD}' is not a string.")
-    ...
-    ...     # Return failure if constraints were violated
-    ...     if constraint_failures:
-    ...         feedback_str = "Issues with the response:\\n"
-    ...         for failure_msg in constraint_failures:
-    ...             feedback_str += f"\\t* {failure_msg}\\n"
-    ...         return dspy.Prediction(score=0.0, feedback=feedback_str)
-    ...
-    ...     # Constraints passed - proceed to LLM-based assessment
-    ...     question = args.get("question", "")
-    ...     assess_predictor = dspy.Predict(AssessQuality)
-    ...     assessment_result = assess_predictor(question=question, answer=output_value)
-    ...     # Ensure score is treated as float, handle potential conversion errors robustly if needed
-    ...     try:
-    ...         score = float(assessment_result.assessment_score)
-    ...     except (ValueError, TypeError):
-    ...         print(f"Warning: Could not convert assessment_score '{assessment_result.assessment_score}' to float. Defaulting to 0.0.")
-    ...         score = 0.0 # Default score if conversion fails
-    ...     feedback = assessment_result.assessment_feedback
-    ...     return dspy.Prediction(score=score, feedback=feedback)
-    >>>
-    >>> qa_module = dspy.Predict(GenerateQA)
-    >>> refined_qa = Refine(
-    ...     signature=qa_module.signature,
-    ...     reward_fn=assess_quality_with_constraints,
-    ...     threshold=0.8,
-    ...     N=3,
-    ...     verbose=False
-    ... )
-    >>>
-    >>> # --- Hypothetical Run ---
-    >>> # Assume some LM is configured, e.g., dspy.settings.configure(lm=YourLanguageModel())
-    >>> # Assume question = "What are mitochondria?"
-    >>>
-    >>> # Iteration 1:
-    >>> # predictor generates: answer="Powerhouse." (1 word)
-    >>> # reward_fn checks constraints: Fails MIN_WORDS (1 < 5).
-    >>> # reward_fn returns: Prediction(score=0.0, feedback="Issues with the response: Constraint Failed: 'answer' is too short (1 < 5 words).")
-    >>> # >> Content-based assessment (LLM call to AssessQuality) is skipped due to constraint failure.
-    >>>
-    >>> # Iteration 2:
-    >>> # predictor receives previous attempt info and generates: answer="Mitochondria are the powerhouse of the cell." (7 words)
-    >>> # reward_fn checks constraints: Passes MIN_WORDS and MAX_WORDS.
-    >>> # reward_fn proceeds to content assessment by calling the LLM via dspy.Predict(AssessQuality).
-    >>> # (Hypothetical LLM assessment returns score=0.9, feedback="Good answer! Concise and captures the key function, though could add that mitochondria are organelles in eukaryotic cells with their own DNA.")
-    >>> # reward_fn returns: Prediction(score=0.9, feedback="Good answer! Concise and captures the key function, though could add that mitochondria are organelles in eukaryotic cells with their own DNA.")
-    >>> # Success! Score 0.9 >= threshold 0.8. Refinement stops.
-    >>>
-    >>> # Now, calling refined_qa executes this process:
-    >>> # final_result = refined_qa(question="What are mitochondria?")
-    >>> # The final prediction stored in final_result would contain the successful attempt:
-    >>> # print(final_result.answer)
-    >>> # Output would likely be: "Mitochondria are the powerhouse of the cell."
+    ```python
+    import dspy
+
+    # Define a Signature for the base task
+    class GenerateQA(dspy.Signature):
+        "Answer a question."
+        question = dspy.InputField()
+        answer = dspy.OutputField(desc="A concise answer.")
+
+    # Define a Signature for assessing quality (used *after* programmatic checks pass)
+    class AssessQuality(dspy.Signature):
+        "Assess the quality of the generated answer."
+        question = dspy.InputField()
+        answer = dspy.InputField()
+        assessment_score = dspy.OutputField(desc="A score from 0.0 to 1.0.")
+        assessment_feedback = dspy.OutputField(desc="Feedback to improve the answer.")
+
+    # Define the reward function - with internal programmatic checks
+    def assess_quality_with_constraints(args, pred):
+        MIN_WORDS = 5
+        MAX_WORDS = 50
+        TARGET_FIELD = "answer"
+        constraint_failures = []
+        output_value = getattr(pred, TARGET_FIELD, "")
+
+        # Programmatic check for word count
+        if isinstance(output_value, str):
+            word_count = len(output_value.split())
+            if word_count <= MIN_WORDS:
+                constraint_failures.append(f"Constraint Failed: '{TARGET_FIELD}' is too short ({word_count} < {MIN_WORDS} words).")
+            elif word_count >= MAX_WORDS:
+                constraint_failures.append(f"Constraint Failed: '{TARGET_FIELD}' is too long ({word_count} > {MAX_WORDS} words).")
+        else:
+            constraint_failures.append(f"Constraint Check Error: Field '{TARGET_FIELD}' is not a string.")
+
+        # Return failure if constraints were violated
+        if constraint_failures:
+            feedback_str = "Issues with the response:\n"
+            for failure_msg in constraint_failures:
+                feedback_str += f"\t* {failure_msg}\n"
+            return dspy.Prediction(score=0.0, feedback=feedback_str)
+
+        # Constraints passed - proceed to LLM-based assessment
+        question = args.get("question", "")
+        assess_predictor = dspy.Predict(AssessQuality)
+        assessment_result = assess_predictor(question=question, answer=output_value)
+        # Ensure score is treated as float, handle potential conversion errors robustly if needed
+        try:
+            score = float(assessment_result.assessment_score)
+        except (ValueError, TypeError):
+            print(f"Warning: Could not convert assessment_score '{assessment_result.assessment_score}' to float. Defaulting to 0.0.")
+            score = 0.0 # Default score if conversion fails
+        feedback = assessment_result.assessment_feedback
+        return dspy.Prediction(score=score, feedback=feedback)
+
+    qa_module = dspy.Predict(GenerateQA)
+    refined_qa = Refine(
+        signature=qa_module.signature,
+        reward_fn=assess_quality_with_constraints,
+        threshold=0.8,
+        N=3,
+        verbose=False
+    )
+
+    # When using the refined_qa module:
+    result = refined_qa(question="What are mitochondria?")
+    print(result.answer)  # Will contain the best answer after refinement
+    ```
     """
     def __init__(
         self,
@@ -201,29 +187,24 @@ class Refine(Module):
 
         Args:
             signature (Signature): The DSPy signature defining inputs/outputs for the module being refined.
-                                  The internal predictor module's signature will be this signature augmented
-                                  with a `previous_attempts` input field.
+                The internal predictor module's signature will be this signature augmented with a `previous_attempts` input field.
             reward_fn (Callable): A function that evaluates a generated prediction in the context of the
-                                 original inputs. It must return a `dspy.Prediction` object containing
-                                 'score' (float or convertible) and 'feedback' (str) attributes.
-                                 Function signature: fn(args: dict[str, Any], pred: Prediction) -> Prediction
+                original inputs. It must return a `dspy.Prediction` object containing 'score' (float or convertible) and 'feedback' (str) attributes.
+                Function signature: fn(args: dict[str, Any], pred: Prediction) -> Prediction
             threshold (Union[float, bool, int]): Minimum acceptable score. Refinement stops if this score is met or exceeded.
                 Can be a float, boolean, or integer value. If a boolean is provided, True is treated as 1.0 and False as 0.0.
                 Defaults to 0.7.
             N (int): Maximum number of refinement iterations to attempt. Defaults to 3.
             use_cot (bool): If True, uses `dspy.ChainOfThought` for the internal predictor module,
-                           encouraging step-by-step reasoning. If False, uses `dspy.Predict`.
-                           Defaults to False.
+                encouraging step-by-step reasoning. If False, uses `dspy.Predict`. Defaults to False.
             verbose (bool): If True, prints detailed logs of the refinement process, including
-                           intermediate outputs, scores, and feedback. Defaults to False.
+                intermediate outputs, scores, and feedback. Defaults to False.
             fail_if_below_threshold (bool): If True, raises a `ValueError` if the `threshold` score
-                                           is not met after `N` iterations. If False, returns the
-                                           best prediction found even if it's below the threshold.
-                                           Defaults to False.
+                is not met after `N` iterations. If False, returns the best prediction found even if it's below the threshold.
+                Defaults to False.
             use_llm_feedback (bool): If True, attempts to use the `OfferFeedback` signature to
-                                    generate feedback for the predictor module instead of using
-                                    the feedback string directly from `reward_fn`. The `reward_fn`
-                                    is still required for scoring. Defaults to False.
+                generate feedback for the predictor module instead of using the feedback string directly from `reward_fn`.
+                The `reward_fn` is still required for scoring. Defaults to False.
         """
         super().__init__()
         assert signature is not None, "A `signature` must be provided to Refine."
@@ -278,43 +259,45 @@ class Refine(Module):
 
         Args:
             attempts_log (list[dict[str, Any]]): A list where each dictionary represents
-                a past attempt, potentially containing 'attempt_number', 'output',
-                'score', 'feedback', and 'error'.
+                a past attempt, potentially containing 'attempt_number', 'output', 'score', 'feedback', and 'error'.
 
         Returns:
             str: A formatted string detailing previous attempts, or "N/A" if the log is empty.
 
         Example:
-            >>> attempts_log = [
-            ...     {
-            ...         "attempt_number": 1,
-            ...         "output": {"answer": "They make energy."},
-            ...         "score": 0.6,
-            ...         "feedback": "Be more specific about the type of energy produced."
-            ...     },
-            ...     {
-            ...         "attempt_number": 2,
-            ...         "output": {"answer": "They make ATP energy."},
-            ...         "score": 0.7,
-            ...         "feedback": "Mention 'cellular respiration' in your answer."
-            ...     }
-            ... ]
-            >>> formatted = Refine._format_previous_attempts(attempts_log)
-            >>> print(formatted)
-            --- PREVIOUS ATTEMPTS HISTORY ---
-            ATTEMPT 1:
-              Output:
-                answer: They make energy.
-              Score: 0.6
-              Feedback Given After This Attempt: Be more specific about the type of energy produced.
-            ----------
-            ATTEMPT 2:
-              Output:
-                answer: They make ATP energy.
-              Score: 0.7
-              Feedback Given After This Attempt: Mention 'cellular respiration' in your answer.
-            ----------
-            --- END PREVIOUS ATTEMPTS HISTORY ---
+        ```python
+        attempts_log = [
+            {
+                "attempt_number": 1,
+                "output": {"answer": "They make energy."},
+                "score": 0.6,
+                "feedback": "Be more specific about the type of energy produced."
+            },
+            {
+                "attempt_number": 2,
+                "output": {"answer": "They make ATP energy."},
+                "score": 0.7,
+                "feedback": "Mention 'cellular respiration' in your answer."
+            }
+        ]
+        formatted = Refine._format_previous_attempts(attempts_log)
+        print(formatted)
+        # Output:
+        # --- PREVIOUS ATTEMPTS HISTORY ---
+        # ATTEMPT 1:
+        #   Output:
+        #     answer: They make energy.
+        #   Score: 0.6
+        #   Feedback Given After This Attempt: Be more specific about the type of energy produced.
+        # ----------
+        # ATTEMPT 2:
+        #   Output:
+        #     answer: They make ATP energy.
+        #   Score: 0.7
+        #   Feedback Given After This Attempt: Mention 'cellular respiration' in your answer.
+        # ----------
+        # --- END PREVIOUS ATTEMPTS HISTORY ---
+        ```
         """
         if not attempts_log:
             return "N/A"
@@ -365,23 +348,19 @@ class Refine(Module):
 
         Args:
             program_inputs_dict (dict[str, Any]): The original keyword arguments passed to
-                                                 the `Refine.forward` method for this run.
+                the `Refine.forward` method for this run.
             trace (list[Any]): The execution trace captured during the `predictor_module`'s
-                               run for the current attempt. Typically contains tuples or
-                               objects representing predictor calls, their inputs, and outputs.
-            outputs_dict (dict[str, Any]): The primary outputs generated by the
-                                           `predictor_module` for the current attempt.
-            current_score (float): The reward score assigned by the `reward_fn` to the
-                                   current attempt's output.
+                run for the current attempt. Typically, contains tuples or objects representing predictor calls, their inputs, and outputs.
+            outputs_dict (dict[str, Any]): The primary outputs generated by the `predictor_module` for the current attempt.
+            current_score (float): The reward score assigned by the `reward_fn` to the current attempt's output.
             predictor2name (dict[Module, str]): A mapping from sub-module instances within
-                                                the `predictor_module` to their assigned string names.
-                                                Used for structuring the trajectory context and
-                                                potentially enabling targeted advice retrieval later.
+                the `predictor_module` to their assigned string names.
+                Used for structuring the trajectory context and potentially enabling targeted advice retrieval later.
         Returns:
             dict[str, str]: A dictionary mapping module names (str) to specific advice/hint
-                            strings (str) generated by `OfferFeedback`. Returns a dictionary
-                            containing an 'error' key if the feedback generation process fails
-                            or if the returned format is invalid.
+                strings (str) generated by `OfferFeedback`. Returns a dictionary
+                containing an 'error' key if the feedback generation process fails
+                or if the returned format is invalid.
         """
         if self.verbose:
             print("Generating LLM feedback/advice...")
@@ -449,22 +428,21 @@ class Refine(Module):
 
         Args:
             **kwargs (dict): Keyword arguments corresponding to the input fields defined in the
-                            `signature` passed during initialization.
+                `signature` passed during initialization.
 
         Returns:
             Prediction: The prediction object corresponding to the attempt with the highest score
-                        achieved during the refinement process. This object will have an additional
-                        attribute `Refine_metadata` (dict) containing details about the refinement run
-                        (iterations, final score, success status, attempt logs).
+                achieved during the refinement process. This object will have an additional
+                attribute `Refine_metadata` (dict) containing details about the refinement run
+                (iterations, final score, success status, attempt logs).
 
         Raises:
             ValueError: If `fail_on_threshold` is True and the best score achieved after N iterations
-                        is still below the `threshold`.
+                is still below the `threshold`.
             RuntimeError: If the module fails to produce any valid prediction across all N attempts
-                          (e.g., due to repeated LLM errors or exceptions in `reward_fn`).
+                (e.g., due to repeated LLM errors or exceptions in `reward_fn`).
             TypeError: If the provided `reward_fn` does not return a `dspy.Prediction` object, or if
-                       that object lacks the required 'score' or 'feedback' attributes, or if 'score'
-                       is not convertible to float.
+                that object lacks the required 'score' or 'feedback' attributes, or if 'score' is not convertible to float.
         """
         lm = dspy.settings.lm
         temps: list[float] = self._get_temperatures()
@@ -606,7 +584,7 @@ def inspect_modules(program):
 
     Returns:
         str: A formatted multi-line string containing detailed descriptions of all modules
-             in the program, with separator lines between each module's information.
+            in the program, with separator lines between each module's information.
     """
     separator = "-" * 80
     output = [separator]
